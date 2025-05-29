@@ -1,0 +1,120 @@
+from flask import Flask, render_template, request, redirect, url_for
+import os
+import cv2
+from skimage.metrics import structural_similarity as ssim
+
+app = Flask(_name_)
+
+# User credentials (you can change these to match your own credentials)
+USER_CREDENTIALS = {'username': 'shalzz', 'password': '17dk'}
+
+# Configure upload folder
+UPLOAD_FOLDER = 'static/uploaded_images/'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+@app.route('/')
+def default():
+    # Redirect to the login page
+    return redirect(url_for('login'))
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        # Check if username and password match
+        if username == USER_CREDENTIALS['username'] and password == USER_CREDENTIALS['password']:
+            return redirect(url_for('home'))
+        else:
+            error = "Invalid username or password"
+            return render_template('login.html', error=error)
+    return render_template('login.html')
+
+
+@app.route('/home')
+def home():
+    return render_template('index.html', result=None, best_match=None)
+
+
+@app.route('/verify', methods=['POST'])
+def verify():
+    if 'reference' not in request.files or 'signatures' not in request.files:
+        print("Error: Missing files in request.")
+        return render_template('index.html', result="Please upload both files", best_match=None)
+
+    reference_file = request.files['reference']
+    signature_files = request.files.getlist('signatures')
+
+    if reference_file and allowed_file(reference_file.filename):
+        reference_filename = os.path.join(app.config['UPLOAD_FOLDER'], reference_file.filename)
+        reference_file.save(reference_filename)
+        print(f"Reference file saved to: {reference_filename}")
+    else:
+        print("Error: Invalid reference file.")
+        return render_template('index.html', result="Invalid reference file", best_match=None)
+
+    # Save signature files and initialize variables
+    uploaded_files = []
+    for file in signature_files:
+        if file and allowed_file(file.filename):
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+            file.save(filepath)
+            uploaded_files.append(filepath)
+            print(f"Uploaded signature saved to: {filepath}")
+        else:
+            print(f"Error: Invalid file skipped: {file.filename}")
+
+    # Ensure there are uploaded signature files
+    if not uploaded_files:
+        print("Error: No valid signature files uploaded.")
+        return render_template('index.html', result="No valid signature files uploaded", best_match=None)
+
+    # Perform verification
+    reference_image = cv2.imread(reference_filename, cv2.IMREAD_GRAYSCALE)
+    best_match = None
+    max_similarity = 0.0
+    threshold = 0.8  # Set the similarity threshold
+
+    for filepath in uploaded_files:
+        signature_image = cv2.imread(filepath, cv2.IMREAD_GRAYSCALE)
+        try:
+            similarity, _ = ssim(reference_image, signature_image, full=True)
+            print(f"SSIM for {filepath}: {similarity}")
+            if similarity > max_similarity:
+                max_similarity = similarity
+                best_match = filepath
+        except Exception as e:
+            print(f"Error comparing {filepath}: {e}")
+
+    # Check the final similarity result
+    if max_similarity > threshold:
+        print(f"Signature is verified. Best match: {best_match}")
+        result = "Signature is verified"
+    else:
+        print("Signature is not verified.")
+        result = "Signature is not verified"
+        best_match = None
+
+    # Redirect to the result page
+    return redirect(url_for('result', result=result, best_match=best_match))
+
+
+@app.route('/result')
+def result():
+    # Retrieve result and best match from URL parameters
+    result = request.args.get('result')
+    best_match = request.args.get('best_match')
+
+    return render_template('result.html', result=result, best_match=best_match)
+
+
+def allowed_file(filename):
+    """Check if the file is of an allowed type."""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+if _name_ == '_main_':
+    app.run(debug=True)
